@@ -1,2 +1,3 @@
 # dmon-duino
-Arduino sketch + PHP Script and Database
+Arduino sketch to get sensor values and transmit to hosted PHP script.
+PHP script to transit he sensor values to ThingSpeak.
