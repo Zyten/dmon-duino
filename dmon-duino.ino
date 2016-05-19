@@ -1,3 +1,39 @@
+/*
+ Dust Monitoring System with Respiratory Health Care DSS
+ #dmon-duino
+ 
+ Program by Ruban Selvarajah
+ Written February 2016
+
+ http://arduinodev.woofex.net/2012/12/01/standalone-sharp-dust-sensor/
+
+ COMPONENTS
+ Arduino Uno
+ Sharp Optical Dust Sensor – Datasheet (http://www.sparkfun.com/datasheets/Sensors/gp2y1010au_e.pdf)
+ DHT-11 - Datasheet (http://www.micropik.com/PDF/dht11.pdf)
+ SeeedStudio Wifi Shield 2.0 - Datasheet (http://www.seeedstudio.com/wiki/Wifi_Shield_V2.0)
+ 220 uF Capacitor
+ 150 Ω Resistor
+ Breadboard
+ M/M jumper cables
+
+ SETUP
+ Sharp pin 1 (V-LED)   => 3.3V (connected to 150ohm resister)
+ Sharp pin 2 (LED-GND) => Arduino GND pin
+ Sharp pin 3 (LED)     => Arduino dpin 12
+ Sharp pin 4 (S-GND)   => Arduino GND pin
+ Sharp pin 5 (Vo)      => Arduino pin A4
+ Sharp pin 6 (Vcc)     => 3.3V (direct)
+
+ DHT Dat => Arduino pin A1
+ DHT Vcc => 3.3V
+ DHT Gnd => Arduino GND
+
+ SETUP DIAGRAM: http://github.com/Zyten/dmon-web/diagrams/SETUP.png
+
+ 
+ */
+
 #include <Arduino.h>
 #include <SoftwareSerial.h>
 #include <WiFly.h>
@@ -18,15 +54,14 @@ HTTPClient http;
 char get;
 
 #include <dht.h>
-
-#define dht_dpin A1 //no ; here. Set equal to channel sensor is on
+#define dht_dpin A1
 
 dht DHT;
  
-int measurePin = 5;
+int measurePin = 4;
 int ledPower = 12;
  
-int samplingTime = 3600;
+int samplingTime = 280;
 int deltaTime = 40;
 int sleepTime = 9680;
  
@@ -35,18 +70,19 @@ float calcVoltage = 0;
 float dustDensity = 0.0;
 float temp = 0.0;
 float humidity = 0.0;
+
  
 void setup(){
   Serial.begin(9600);
   pinMode(ledPower,OUTPUT);
 
-  Serial.println("------- WIFLY HTTP --------");
+  Serial.println("------- REALTIME D-MON --------");
   
-  
+  //Initialise wireless connection
   uart.begin(9600);         // WiFly UART Baud Rate: 9600
-  // Wait WiFly to init
- delay(3000);
-
+  // Wait for WiFly to start
+  delay(3000);
+  Serial.println("Attemping connection to " SSID " ..");
   // check if WiFly is associated with AP(SSID)
   if (!wifly.isAssociated(SSID)) {
     while (!wifly.join(SSID, KEY, AUTH)) {
@@ -54,41 +90,46 @@ void setup(){
       Serial.println("Wait 0.1 second and try again...");
       delay(100);
     }
-    
-    wifly.save();    // save configuration, 
-}
+   Serial.println("Connected to " SSID "."); 
+   wifly.save(); // save wifi configuration
+  }
 }
  
 void loop(){
+  //Read Dust Sensor
   digitalWrite(ledPower,LOW); // power on the LED
   delayMicroseconds(samplingTime);
  
   voMeasured = analogRead(measurePin); // read the dust value
  
   delayMicroseconds(deltaTime);
-  DHT.read11(dht_dpin);
+  
   digitalWrite(ledPower,HIGH); // turn the LED off
   delayMicroseconds(sleepTime);
  
   // 0 - 3.3V mapped to 0 - 1023 integer values
   // recover voltage
-  calcVoltage = voMeasured * (3.3 / 1024);
+  calcVoltage = voMeasured * (5.0 / 1024.0);
  
-  // linear eqaution taken from http://www.howmuchsnow.com/arduino/airquality/
-  // Chris Nafis (c) 2012
-  dustDensity = 0.17 * calcVoltage - 0.1;
+  //Apply linear equation to approximate values to match Output Voltage vs. Dust Density graph in datasheet
+  dustDensity = (calcVoltage - 0.6)/6*1000;
+  
+  if (dustDensity < 0 )
+      dustDensity = 0;
+  
+  //Read DHT-11
+  DHT.read11(dht_dpin);
 
+  //Stringify float values to ensure that they are url-friendly
   char duststr[10];
-  //float d = dustDensity;
-  float d = 1.23;
+  float d = dustDensity;
   dtostrf(d, 6, 2, duststr);
  
-  Serial.print("Dust Density: ");
+  Serial.print("\r\nDust Density: ");
   Serial.print(duststr);
 
   char humiditystr[10];
   float h = DHT.humidity;
-  //float h = 98.00;
   dtostrf(h, 6, 2, humiditystr);
   
   Serial.print(" - Humidity: ");
@@ -96,7 +137,6 @@ void loop(){
 
   char tempstr[10];
   float t = DHT.temperature;
-  //float t = 25.00;
   dtostrf(t, 6, 2, tempstr);
 
   Serial.print(" - Temp: "); 
@@ -104,34 +144,28 @@ void loop(){
  
   delay(1000);
 
-
-  String url   = "http://zyten.xyz/testo/transitThingSpeak.php?temp=";
+  //Prepare GET url
+  String url   = "http://188.166.224.15/dmon-duino/transitThingSpeak.php?temp=";
   String url2  = "&humidity=";
   String url3  = "&dust=";
   String myURL = url + tempstr+ url2 + humiditystr + url3 + duststr;
-  //myURL = myURL.simplified();
   myURL.replace( " ", "" );
   const char * HTTP_GET_URL = myURL.c_str();
 
-  //Serial.println(HTTP_GET_URL);
-  
-  //const char *HTTP_GET_URL = "http://zyten.xyz/testo/transitThingSpeak.php?temp=80.00&humidity=60.00&dust=1.20";
-
-  //#define HTTP_GET_URL "http://api.thingspeak.com/update?key=MECXDF1CRRLAKISK&temp=12.00&humidity=55.00&dust=0.25"
-  Serial.print("\r\nTry to get url - "); Serial.println(HTTP_GET_URL); 
+  Serial.print("\r\nAttemping transmission to - "); Serial.println(HTTP_GET_URL); 
   Serial.println("------------------------------");
-  delay(30000);
   while (http.get(HTTP_GET_URL, postingInterval) < 0) {
   }
   while (wifly.receive((uint8_t *)&get, 1, 1000) == 1) {
     Serial.print(get);
   }
-  delay(30000);
 
+  //Command mode for debug purposes
   if (wifly.commandMode()) {
-    Serial.println("\r\n\r\nEnter command mode. Send \"exit\"(with \\r) to exit command mode");
+    //Serial.println("\r\n\r\nEnter command mode. Send \"exit\"(with \\r) to exit command mode");
   }
-  
+
+  //Print response from server
   int c;
   while (wifly.available()) {
     c = wifly.read();
@@ -139,4 +173,7 @@ void loop(){
       Serial.write((char)c);
     }
   }
+
+  Serial.print("\r\nWait for 30 seconds before next reading.");
+  delay(30000);
 }
